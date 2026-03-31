@@ -9,6 +9,7 @@ interface PosSettingsState {
   showProductImages: boolean;
   customerMandatory: boolean;
   phoneDigits: number;
+  billingType: 'postpaid' | 'prepaid';
   // Printer settings
   printerPaperSize: PaperSize;
   printerEnabled: boolean;
@@ -52,6 +53,7 @@ interface PosSettingsState {
   setBillShowAddress: (v: boolean) => void;
   setBillShowPhone: (v: boolean) => void;
   setBillShowGstn: (v: boolean) => void;
+  setBillingType: (v: 'postpaid' | 'prepaid') => void;
 }
 
 export const usePosSettingsStore = create<PosSettingsState>()(
@@ -81,6 +83,7 @@ export const usePosSettingsStore = create<PosSettingsState>()(
       billShowAddress: true,
       billShowPhone: true,
       billShowGstn: false,
+      billingType: 'postpaid',
       // Actions
       setShowProductImages: (show) => set({ showProductImages: show }),
       setCustomerMandatory: (mandatory) => set({ customerMandatory: mandatory }),
@@ -103,6 +106,7 @@ export const usePosSettingsStore = create<PosSettingsState>()(
       setBillShowAddress: (v) => set({ billShowAddress: v }),
       setBillShowPhone: (v) => set({ billShowPhone: v }),
       setBillShowGstn: (v) => set({ billShowGstn: v }),
+      setBillingType: (v) => set({ billingType: v }),
     }),
     { name: 'pos-settings' }
   )

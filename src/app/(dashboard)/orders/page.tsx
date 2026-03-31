@@ -5,6 +5,7 @@ import api from '@/lib/api';
 import { useAuthStore } from '@/store/auth';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { Order } from '@/lib/types';
 
@@ -67,6 +68,23 @@ export default function OrdersPage() {
   const getNextStatus = (current: string) => {
     const idx = statusFlow.indexOf(current);
     return idx >= 0 && idx < statusFlow.length - 1 ? statusFlow[idx + 1] : null;
+  };
+
+  const isOwnerOrManager = currentTenant?.role === 'owner' || currentTenant?.role === 'manager';
+
+  const deleteItem = async (orderId: number, itemId: number) => {
+    if (!confirm('Remove this item from the order?')) return;
+    try {
+      await api.delete(`/orders/${orderId}/items/${itemId}`);
+      toast.success('Item removed');
+      fetchOrders();
+      if (selectedOrder?.id === orderId) {
+        const { data } = await api.get(`/orders/${orderId}`);
+        setSelectedOrder(data.order);
+      }
+    } catch {
+      toast.error('Failed to remove item');
+    }
   };
 
   const displayOrders = filter === 'active'
@@ -153,8 +171,8 @@ export default function OrdersPage() {
             <h3 className="text-sm font-semibold text-gray-500 uppercase mb-3">Items</h3>
             <div className="space-y-3">
               {selectedOrder.items?.map((item) => (
-                <div key={item.id} className="flex justify-between">
-                  <div>
+                <div key={item.id} className="flex justify-between items-start">
+                  <div className="flex-1">
                     <p className="text-sm font-medium text-gray-900">
                       {item.quantity}x {item.product_name}
                     </p>
@@ -162,9 +180,20 @@ export default function OrdersPage() {
                       <p className="text-xs text-gray-400 italic">{item.special_instructions}</p>
                     )}
                   </div>
-                  <p className="text-sm font-medium text-gray-900">
-                    {currency}{Number(item.total).toLocaleString()}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-gray-900">
+                      {currency}{Number(item.total).toLocaleString()}
+                    </p>
+                    {selectedOrder.status === 'pending' && isOwnerOrManager && (
+                      <button
+                        onClick={() => deleteItem(selectedOrder.id, item.id)}
+                        className="p-1 rounded hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors"
+                        title="Remove item"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

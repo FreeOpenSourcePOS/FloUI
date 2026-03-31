@@ -3,12 +3,11 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getLandingPage } from '@/components/layout/AuthGuard';
-import Link from 'next/link';
 import { useAuthStore } from '@/store/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardFooter } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import toast from 'react-hot-toast';
 
 function LoginContent() {
@@ -116,12 +115,6 @@ function LoginContent() {
               </Button>
             </form>
           </CardContent>
-          <CardFooter className="justify-center">
-            <p className="text-sm text-muted-foreground">
-              Don&apos;t have an account?{' '}
-              <Link href="/auth/register" className="text-primary hover:underline font-medium">Register</Link>
-            </p>
-          </CardFooter>
         </Card>
       </div>
     </div>

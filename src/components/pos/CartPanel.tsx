@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { useCartStore } from '@/store/cart';
 import { useHeldOrdersStore } from '@/store/held-orders';
 import { useAuthStore } from '@/store/auth';
+import { usePosSettingsStore } from '@/store/pos-settings';
 import toast from 'react-hot-toast';
 import type { Table } from '@/lib/types';
 
@@ -31,7 +32,9 @@ export default function CartPanel({ tables, currency, submitting, onPlaceOrder, 
   const cart = useCartStore();
   const heldOrders = useHeldOrdersStore();
   const { currentTenant } = useAuthStore();
+  const billingType = usePosSettingsStore((s) => s.billingType);
   const isRestaurant = (currentTenant?.business_type ?? 'restaurant') === 'restaurant';
+  const canHold = isRestaurant && cart.orderType === 'dine_in' && cart.tableId && cart.items.length > 0 && billingType === 'postpaid';
 
   const handleHold = () => {
     if (!cart.tableId) {
@@ -164,7 +167,7 @@ export default function CartPanel({ tables, currency, submitting, onPlaceOrder, 
           </span>
         </div>
         <div className="flex gap-2">
-          {isRestaurant && cart.orderType === 'dine_in' && cart.tableId && cart.items.length > 0 && (
+          {canHold && (
             <Button variant="outline" onClick={handleHold} className="flex-1">
               <Pause size={14} className="mr-1" /> Hold
             </Button>

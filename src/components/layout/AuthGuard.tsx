@@ -29,8 +29,6 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         router.push('/auth/login');
       } else if (!currentTenant) {
         router.push('/auth/login?select_tenant=true');
-      } else if (pathname === '/dashboard') {
-        router.replace(getLandingPage(currentTenant.role, currentTenant.business_type));
       }
     }
   }, [user, currentTenant, loading, router, pathname, isPublicPath]);

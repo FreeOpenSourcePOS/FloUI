@@ -85,7 +85,12 @@ export default function TableCheckoutModal({ table, currency, onClose, onAddItem
       <div className="bg-white rounded-2xl w-full max-w-md max-h-[85vh] flex flex-col">
         <div className="flex justify-between items-center p-5 border-b border-gray-100">
           <div>
-            <h2 className="text-lg font-bold text-gray-900">{table.name}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-bold text-gray-900">{table.name}</h2>
+              <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs font-medium rounded-full">
+                {order.bill ? (order.bill.payment_status === 'paid' ? 'PAID' : 'UNPAID') : 'UNBILLED'}
+              </span>
+            </div>
             <p className="text-sm text-gray-500">Order #{order.order_number}</p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
@@ -137,6 +142,12 @@ export default function TableCheckoutModal({ table, currency, onClose, onAddItem
             <span>Total</span>
             <span className="text-brand">{currency}{Number(order.total).toLocaleString()}</span>
           </div>
+          {order.bill && order.bill.payment_status !== 'paid' && Number(order.bill.balance) > 0 && (
+            <div className="flex justify-between text-sm font-medium">
+              <span className="text-orange-600">Balance Due</span>
+              <span className="text-orange-600">{currency}{Number(order.bill.balance).toLocaleString()}</span>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3 pt-2">
             <Button variant="outline" onClick={() => onAddItems(table, order)}>

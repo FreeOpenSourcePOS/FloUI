@@ -291,12 +291,13 @@ export default function SettingsPage() {
   // Store / business fields — local form state (saved only on explicit Save)
   type BusinessForm = {
     businessName: string; countryCode: string; timezone: string; currency: string;
+    billingType: 'postpaid' | 'prepaid';
     gstin: string; businessAddress: string; businessPhone: string;
     billShowName: boolean; billShowAddress: boolean; billShowPhone: boolean; billShowGstn: boolean;
   };
   const [savedBusiness, setSavedBusiness] = useState<BusinessForm>({
-    businessName: '', countryCode: '', timezone: '', currency: '', gstin: '',
-    businessAddress: '', businessPhone: '',
+    businessName: '', countryCode: '', timezone: '', currency: '', billingType: 'postpaid',
+    gstin: '', businessAddress: '', businessPhone: '',
     billShowName: true, billShowAddress: true, billShowPhone: true, billShowGstn: false,
   });
   const [form, setForm] = useState<BusinessForm>(savedBusiness);
@@ -325,6 +326,7 @@ export default function SettingsPage() {
         countryCode: matchedCountry?.code || '',
         timezone: d.timezone || '',
         currency: d.currency || '',
+        billingType: d.billing_type === 'prepaid' ? 'prepaid' : 'postpaid',
         gstin: d.gstin || '',
         businessAddress: d.business_address || '',
         businessPhone: d.business_phone || '',
@@ -343,6 +345,7 @@ export default function SettingsPage() {
       if (d.gstin) posSettings.setBillGstin(d.gstin);
       if (d.business_address) posSettings.setBillAddress(d.business_address);
       if (d.business_phone) posSettings.setBillPhone(d.business_phone);
+      posSettings.setBillingType(d.billing_type === 'prepaid' ? 'prepaid' : 'postpaid');
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -366,6 +369,7 @@ export default function SettingsPage() {
         business_name: form.businessName,
         timezone: form.timezone,
         currency: form.currency,
+        billing_type: form.billingType,
         gstin: form.gstin,
         business_address: form.businessAddress,
         business_phone: form.businessPhone,
@@ -382,6 +386,7 @@ export default function SettingsPage() {
       posSettings.setBillShowAddress(form.billShowAddress);
       posSettings.setBillShowPhone(form.billShowPhone);
       posSettings.setBillShowGstn(form.billShowGstn);
+      posSettings.setBillingType(form.billingType);
       toast.success('Store details saved');
     } catch {
       toast.error('Failed to save');
@@ -507,6 +512,19 @@ export default function SettingsPage() {
                       className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-brand" />
                   ) : (
                     <p className="font-medium text-gray-900">{form.timezone || currentTenant?.timezone}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-500 mb-1">Billing Type</label>
+                  {isAdmin ? (
+                    <select value={form.billingType}
+                      onChange={(e) => setForm((p) => ({ ...p, billingType: e.target.value as 'postpaid' | 'prepaid' }))}
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-brand bg-white">
+                      <option value="postpaid">Postpaid – Pay at checkout (hold orders)</option>
+                      <option value="prepaid">Prepaid – Pay first (no hold)</option>
+                    </select>
+                  ) : (
+                    <p className="font-medium text-gray-900 capitalize">{form.billingType}</p>
                   )}
                 </div>
                 <div>
