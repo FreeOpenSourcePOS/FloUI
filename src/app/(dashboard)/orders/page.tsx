@@ -36,7 +36,7 @@ export default function OrdersPage() {
         ? { per_page: 50 }
         : { status: filter, per_page: 50 };
       const { data } = await api.get('/orders', { params });
-      setOrders(data.data || []);
+      setOrders(data.orders || []);
     } catch {
       toast.error('Failed to load orders');
     } finally {

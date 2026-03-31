@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
-import { Clock, ChefHat, X, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Clock, ChefHat, X, ChevronRight, ChevronLeft, LogOut, Wifi, WifiOff } from 'lucide-react';
 import type { Order, OrderItem } from '@/lib/types';
 
 const STATUS_CONFIG = {
@@ -36,54 +36,82 @@ interface ModalItem {
   orderNumber: string;
 }
 
-export default function KitchenDisplayPage() {
+interface KdsMessage {
+  type: string;
+  orders?: Order[];
+  counts?: Record<string, number>;
+  user?: {
+    id: string;
+    name: string;
+    role: string;
+    categoryIds: string[];
+  };
+  message?: string;
+}
+
+interface LoggedInUser {
+  id: string;
+  name: string;
+  role: string;
+  categoryIds: string[];
+  token: string;
+}
+
+type ConnectionMode = 'websocket' | 'rest' | null;
+
+export default function KdsPage() {
+  const [user, setUser] = useState<LoggedInUser | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<KitchenStatus>('pending');
   const [modalItem, setModalItem] = useState<ModalItem | null>(null);
   const [updating, setUpdating] = useState<number | null>(null);
+  const [connected, setConnected] = useState(false);
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>(null);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
+  const wsRef = useRef<WebSocket | null>(null);
+  const restIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const fetchOrders = async () => {
+  const fetchOrdersRest = useCallback(async () => {
     try {
       const { data } = await api.get(`/kitchen/orders?status=pending,preparing,ready,served`);
       setOrders(data.orders || []);
       setCounts(data.counts || {});
+      setConnected(true);
     } catch {
-      console.error('Failed to fetch kitchen orders');
-    } finally {
-      setLoading(false);
+      setConnected(false);
     }
-  };
-
-  useEffect(() => {
-    fetchOrders();
-    const interval = setInterval(fetchOrders, 5000);
-    return () => clearInterval(interval);
   }, []);
 
-  const filteredOrders = orders
-    .map((order) => ({
-      ...order,
-      items: (order.items || []).filter((item) => (item.status || 'pending') === activeTab),
-    }))
-    .filter((order) => order.items.length > 0);
+  const startRestPolling = useCallback(() => {
+    setConnectionMode('rest');
+    setConnected(true);
+    fetchOrdersRest();
+    restIntervalRef.current = setInterval(fetchOrdersRest, 5000);
+  }, [fetchOrdersRest]);
 
-  const updateItemStatus = async (itemId: number, status: KitchenStatus) => {
+  const stopRestPolling = useCallback(() => {
+    if (restIntervalRef.current) {
+      clearInterval(restIntervalRef.current);
+      restIntervalRef.current = null;
+    }
+  }, []);
+
+  const updateItemStatus = useCallback(async (itemId: number, status: KitchenStatus) => {
     setUpdating(itemId);
     try {
-      const { data } = await api.patch(`/order-items/${itemId}/status`, { status });
-      setOrders((prev) =>
-        prev.map((o) => (o.id === data.order.id ? data.order : o))
-      );
-      setModalItem(null);
+      await api.patch(`/order-items/${itemId}/status`, { status });
       toast.success(`Item marked as ${STATUS_CONFIG[status].label}`);
     } catch {
       toast.error('Failed to update item');
     } finally {
       setUpdating(null);
     }
-  };
+  }, []);
 
   const getTimeSince = (dateStr: string) => {
     const minutes = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
@@ -92,26 +120,249 @@ export default function KitchenDisplayPage() {
     return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-4 border-brand border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError('');
+    setLoading(true);
+
+    try {
+      const { data } = await api.post('/auth/login', {
+        email: loginEmail,
+        password: loginPassword,
+      });
+
+      const loggedInUser: LoggedInUser = {
+        id: data.user.id,
+        name: data.user.name,
+        role: data.user.role,
+        categoryIds: data.user.category_ids || [],
+        token: data.access_token,
+      };
+
+      setUser(loggedInUser);
+      localStorage.setItem('kds_user', JSON.stringify(loggedInUser));
+      tryWebSocket(loggedInUser.token);
+    } catch (err: any) {
+      setLoginError(err.response?.data?.error || 'Login failed');
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+    stopRestPolling();
+    setUser(null);
+    setOrders([]);
+    setConnected(false);
+    setConnectionMode(null);
+    localStorage.removeItem('kds_user');
+  };
+
+  const tryWebSocket = useCallback((token: string) => {
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+    
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/kds`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+    let reconnectTimeout: NodeJS.Timeout | null = null;
+    let connectionTimeout: NodeJS.Timeout | null = null;
+
+    const cleanup = () => {
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (connectionTimeout) clearTimeout(connectionTimeout);
+    };
+
+    ws.onopen = () => {
+      cleanup();
+      setConnectionMode('websocket');
+      setConnected(true);
+      ws.send(JSON.stringify({ type: 'auth', token }));
+    };
+
+    ws.onclose = () => {
+      cleanup();
+      setConnected(false);
+      if (wsRef.current === ws) {
+        reconnectTimeout = setTimeout(() => {
+          if (wsRef.current === ws) {
+            tryWebSocket(token);
+          }
+        }, 3000);
+      }
+    };
+
+    ws.onerror = () => {
+      ws.close();
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const msg: KdsMessage = JSON.parse(event.data);
+        if (msg.type === 'auth_success' && msg.user) {
+          setUser(prev => prev ? { ...prev, ...msg.user, token: prev.token } : null);
+          setOrders(msg.orders || []);
+          setCounts(msg.counts || {});
+          setConnected(true);
+          setLoading(false);
+        } else if (msg.type === 'auth_error') {
+          setLoginError(msg.message || 'Authentication failed');
+          ws.close();
+          setLoading(false);
+        } else if (msg.type === 'initial_data' && msg.orders) {
+          setOrders(msg.orders);
+          setCounts(msg.counts || {});
+          setConnected(true);
+          setLoading(false);
+        } else if (msg.type === 'orders' && msg.orders) {
+          setOrders(msg.orders);
+          setCounts(msg.counts || {});
+          setConnected(true);
+        }
+      } catch (e) {
+        console.error('Failed to parse message', e);
+      }
+    };
+
+    connectionTimeout = setTimeout(() => {
+      if (ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+        startRestPolling();
+      }
+    }, 5000);
+  }, [startRestPolling]);
+
+  useEffect(() => {
+    const savedUser = localStorage.getItem('kds_user');
+    if (savedUser) {
+      try {
+        const parsed = JSON.parse(savedUser) as LoggedInUser;
+        setUser(parsed);
+        tryWebSocket(parsed.token);
+      } catch {
+        localStorage.removeItem('kds_user');
+        setLoading(false);
+      }
+    } else {
+      setLoading(false);
+    }
+
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      stopRestPolling();
+    };
+  }, [tryWebSocket, stopRestPolling]);
+
+  useEffect(() => {
+    if (connectionMode === 'rest' && user) {
+      startRestPolling();
+    }
+    return () => stopRestPolling();
+  }, [connectionMode, user, startRestPolling]);
+
+  const filteredOrders = orders
+    .map((order) => ({
+      ...order,
+      items: (order.items || []).filter((item) => (item.status || 'pending') === activeTab),
+    }))
+    .filter((order) => order.items.length > 0);
 
   const activeItem = modalItem?.item;
   const nextStatus = activeItem ? NEXT_STATUS[activeItem.status || 'pending'] : null;
   const prevStatus = activeItem ? PREV_STATUS[activeItem.status || 'pending'] : null;
 
+  if (loading || !user) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
+          <div className="text-center mb-8">
+            <ChefHat size={48} className="mx-auto text-brand mb-4" />
+            <h1 className="text-2xl font-bold text-gray-900">Kitchen Display</h1>
+            <p className="text-gray-500 mt-2">Sign in with your kitchen staff account</p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            {loginError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+                {loginError}
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <input
+                type="email"
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand focus:border-brand"
+                placeholder="chef@flo.local"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand focus:border-brand"
+                placeholder="••••••••"
+                required
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loginLoading}
+              className="w-full py-3 bg-brand text-white font-semibold rounded-lg hover:bg-brand/90 disabled:opacity-50"
+            >
+              {loginLoading ? 'Signing in...' : 'Sign In'}
+            </button>
+          </form>
+
+          <p className="text-xs text-gray-400 text-center mt-6">
+            Only chef, manager, or owner roles can access the kitchen display.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full flex flex-col">
-      {/* Header + Tabs */}
       <div className="shrink-0 mb-4">
         <div className="flex items-center gap-3 mb-3">
           <ChefHat size={24} className="text-brand" />
-          <h1 className="text-xl font-bold text-gray-900">Kitchen Display</h1>
-          <span className="ml-auto text-xs text-gray-400">Auto-refreshes 5s</span>
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">Kitchen Display</h1>
+            <p className="text-xs text-gray-500">{user.name} ({user.role})</p>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            {connectionMode === 'websocket' ? (
+              <span title="WebSocket connected"><Wifi size={16} className="text-green-500" /></span>
+            ) : connectionMode === 'rest' ? (
+              <span title="REST polling (fallback)"><WifiOff size={16} className="text-amber-500" /></span>
+            ) : null}
+            <span className={`w-2.5 h-2.5 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className="text-xs text-gray-400">
+              {connected ? (connectionMode === 'websocket' ? 'Live' : 'Polling 5s') : 'Connecting...'}
+            </span>
+            <button
+              onClick={handleLogout}
+              className="p-2 hover:bg-gray-100 rounded-lg text-gray-500 ml-2"
+              title="Logout"
+            >
+              <LogOut size={20} />
+            </button>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -140,7 +391,6 @@ export default function KitchenDisplayPage() {
         </div>
       </div>
 
-      {/* Order Cards Grid */}
       <div className="flex-1 overflow-y-auto">
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
           {filteredOrders.map((order) => (
@@ -148,7 +398,6 @@ export default function KitchenDisplayPage() {
               key={order.id}
               className={`bg-white rounded-xl border-2 ${STATUS_CONFIG[activeTab].border} p-4 flex flex-col`}
             >
-              {/* Order Header */}
               <div className="flex justify-between items-center mb-3">
                 <div>
                   <span className="font-bold text-lg">#{order.order_number}</span>
@@ -163,7 +412,6 @@ export default function KitchenDisplayPage() {
                 </div>
               </div>
 
-              {/* Items */}
               <div className="space-y-2 flex-1">
                 {order.items?.map((item) => {
                   const itemStatus = (item.status || 'pending') as KitchenStatus;
@@ -212,7 +460,6 @@ export default function KitchenDisplayPage() {
         )}
       </div>
 
-      {/* Full-screen item modal */}
       {modalItem && activeItem && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
@@ -222,7 +469,6 @@ export default function KitchenDisplayPage() {
             className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 flex flex-col gap-5"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Modal header */}
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1 min-w-0">
                 <p className="text-xs text-gray-400 font-medium mb-1">Order #{modalItem.orderNumber}</p>
@@ -245,7 +491,6 @@ export default function KitchenDisplayPage() {
               </button>
             </div>
 
-            {/* Addons */}
             {activeItem.addons && activeItem.addons.length > 0 && (
               <div className="bg-blue-50 rounded-xl p-3">
                 <p className="text-xs font-semibold text-blue-700 mb-1.5 uppercase tracking-wide">Add-ons</p>
@@ -259,7 +504,6 @@ export default function KitchenDisplayPage() {
               </div>
             )}
 
-            {/* Special instructions */}
             {activeItem.special_instructions && (
               <div className="bg-red-50 rounded-xl p-3">
                 <p className="text-xs font-semibold text-red-700 mb-1 uppercase tracking-wide">Special Instructions</p>
@@ -267,7 +511,6 @@ export default function KitchenDisplayPage() {
               </div>
             )}
 
-            {/* Status pipeline */}
             <div className="flex items-center justify-center gap-1.5">
               {STATUS_ORDER.map((s, i) => (
                 <div key={s} className="flex items-center gap-1.5">
@@ -285,7 +528,6 @@ export default function KitchenDisplayPage() {
               ))}
             </div>
 
-            {/* Action buttons */}
             <div className="flex flex-col gap-3">
               {nextStatus && (
                 <button

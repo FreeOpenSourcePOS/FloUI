@@ -25,9 +25,9 @@ export default function TableCheckoutModal({ table, currency, onClose, onAddItem
       try {
         const { data } = await api.get(`/tables/${table.id}`);
         const t = data.table;
-        if (t.current_order) {
+        if (t.activeOrder) {
           // Fetch full order with items
-          const orderRes = await api.get(`/orders/${t.current_order.id}`);
+          const orderRes = await api.get(`/orders/${t.activeOrder.id}`);
           setOrder(orderRes.data.order);
         }
       } catch {

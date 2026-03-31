@@ -5,16 +5,19 @@ import AppSidebar from '@/components/layout/Sidebar';
 import AuthGuard from '@/components/layout/AuthGuard';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
 import { Separator } from '@/components/ui/separator';
+import MenuActionHandler from '@/components/layout/MenuActionHandler';
+import StatusBar from '@/components/layout/StatusBar';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isPos = pathname === '/pos';
+  const isPos = pathname === '/pos' || pathname === '/kds';
 
   return (
     <AuthGuard>
+      <MenuActionHandler />
       <SidebarProvider defaultOpen={false}>
         <AppSidebar />
-        <SidebarInset className="h-screen overflow-hidden">
+        <SidebarInset className="h-screen overflow-hidden flex flex-col">
           {!isPos && (
             <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
               <SidebarTrigger className="-ml-1" />
@@ -27,6 +30,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           }>
             {children}
           </div>
+          <StatusBar />
         </SidebarInset>
       </SidebarProvider>
     </AuthGuard>

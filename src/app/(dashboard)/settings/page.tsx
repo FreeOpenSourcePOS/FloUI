@@ -4,10 +4,11 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '@/store/auth';
 import { usePosSettingsStore, type PaperSize, type BillTemplate } from '@/store/pos-settings';
 import { usePrinterStore } from '@/hooks/usePrinter';
-import { Settings, Building2, Globe, CreditCard, Monitor, Users, Gift, Printer, Share2, FileText, Lock, Smartphone, RefreshCw, Copy, Check } from 'lucide-react';
+import { Settings, Building2, Globe, CreditCard, Monitor, Users, Gift, Printer, Share2, FileText, Lock, Smartphone, RefreshCw, Copy, Check, Wifi, Usb, Trash2, Plus, Star, TestTube2, ChefHat, QrCode, CheckCircle2 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
+import { COUNTRIES } from '@/lib/countries';
 
 const CLASSIC_PREVIEW = `  [STORE NAME]
   Table: T1
@@ -88,6 +89,152 @@ export default function SettingsPage() {
   const [loyaltyDays, setLoyaltyDays] = useState(365);
   const [savingLoyalty, setSavingLoyalty] = useState(false);
 
+  // ── KDS pairing ──────────────────────────────────────────────────────────
+  const [kdsInfo, setKdsInfo] = useState<{ mdns_url: string; ip_url: string; qr_url: string; qr_data_url: string | null } | null>(null);
+  const [kdsInfoLoading, setKdsInfoLoading] = useState(false);
+
+  const fetchKdsInfo = () => {
+    setKdsInfoLoading(true);
+    api.get('/kds-info').then((res) => {
+      setKdsInfo(res.data);
+    }).catch(() => {
+      toast.error('Could not fetch KDS info');
+    }).finally(() => setKdsInfoLoading(false));
+  };
+
+  // ── Updates ─────────────────────────────────────────────────────────────────
+  type UpdateStatus = {
+    status: 'checking' | 'available' | 'up-to-date' | 'downloading' | 'ready-to-install' | 'error' | 'dev-mode';
+    version?: string;
+    percent?: number;
+    error?: string;
+  };
+
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && (window as any).electronAPI) {
+      (window as any).electronAPI.onUpdateStatus((status: UpdateStatus) => {
+        setUpdateStatus(status);
+      });
+      (window as any).electronAPI.getUpdateStatus().then((status: any) => {
+        if (status) setUpdateStatus({ status: status.updateAvailable ? 'available' : 'up-to-date', version: status.version });
+      });
+    }
+  }, []);
+
+  const handleCheckUpdates = () => {
+    if (typeof window !== 'undefined' && (window as any).electronAPI) {
+      (window as any).electronAPI.checkForUpdates();
+    }
+  };
+
+  // ── Printers ─────────────────────────────────────────────────────────────
+  type HwPrinter = {
+    id: string; name: string; connection_type: 'network' | 'usb' | 'webusb';
+    ip_address?: string; port?: number; usb_device_path?: string;
+    paper_width: string; is_default: number;
+  };
+
+  type PrinterForm = {
+    name: string; connection_type: 'network' | 'usb' | 'webusb';
+    ip_address: string; port: string; usb_device_path: string; paper_width: string;
+  };
+
+  const emptyPrinterForm: PrinterForm = {
+    name: '', connection_type: 'network', ip_address: '', port: '9100',
+    usb_device_path: '/dev/usb/lp0', paper_width: '80mm',
+  };
+
+  const [hwPrinters, setHwPrinters] = useState<HwPrinter[]>([]);
+  const [printerForm, setPrinterForm] = useState<PrinterForm>(emptyPrinterForm);
+  const [showPrinterForm, setShowPrinterForm] = useState(false);
+  const [editingPrinterId, setEditingPrinterId] = useState<string | null>(null);
+  const [savingPrinter, setSavingPrinter] = useState(false);
+  const [testingPrinterId, setTestingPrinterId] = useState<string | null>(null);
+
+  const fetchPrinters = () => {
+    api.get('/printers').then((res) => setHwPrinters(res.data.printers || [])).catch(() => {});
+  };
+
+  const openAddPrinter = () => {
+    setPrinterForm(emptyPrinterForm);
+    setEditingPrinterId(null);
+    setShowPrinterForm(true);
+  };
+
+  const openEditPrinter = (p: HwPrinter) => {
+    setPrinterForm({
+      name: p.name, connection_type: p.connection_type,
+      ip_address: p.ip_address || '', port: String(p.port || 9100),
+      usb_device_path: p.usb_device_path || '/dev/usb/lp0',
+      paper_width: p.paper_width || '80mm',
+    });
+    setEditingPrinterId(p.id);
+    setShowPrinterForm(true);
+  };
+
+  const savePrinterHw = async () => {
+    if (!printerForm.name) { toast.error('Printer name is required'); return; }
+    setSavingPrinter(true);
+    try {
+      const payload = {
+        name: printerForm.name,
+        connection_type: printerForm.connection_type,
+        ip_address: printerForm.connection_type === 'network' ? printerForm.ip_address : undefined,
+        port: printerForm.connection_type === 'network' ? Number(printerForm.port) : undefined,
+        usb_device_path: printerForm.connection_type === 'usb' ? printerForm.usb_device_path : undefined,
+        paper_width: printerForm.paper_width,
+      };
+      if (editingPrinterId) {
+        await api.put(`/printers/${editingPrinterId}`, payload);
+        toast.success('Printer updated');
+      } else {
+        await api.post('/printers', payload);
+        toast.success('Printer added');
+      }
+      fetchPrinters();
+      setShowPrinterForm(false);
+    } catch {
+      toast.error('Failed to save printer');
+    } finally {
+      setSavingPrinter(false);
+    }
+  };
+
+  const deletePrinterHw = async (id: string) => {
+    if (!confirm('Delete this printer?')) return;
+    try {
+      await api.delete(`/printers/${id}`);
+      toast.success('Printer deleted');
+      fetchPrinters();
+    } catch { toast.error('Failed to delete'); }
+  };
+
+  const setDefaultPrinter = async (id: string) => {
+    try {
+      await api.post(`/printers/${id}/set-default`);
+      toast.success('Default printer set');
+      fetchPrinters();
+    } catch { toast.error('Failed'); }
+  };
+
+  const testPrinterHw = async (printer: HwPrinter) => {
+    if (printer.connection_type === 'webusb') {
+      toast('WebUSB: use the Connect button in the POS toolbar to test.');
+      return;
+    }
+    setTestingPrinterId(printer.id);
+    try {
+      await api.post(`/printers/${printer.id}/test`);
+      toast.success('Test print sent!');
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Test print failed');
+    } finally {
+      setTestingPrinterId(null);
+    }
+  };
+
   // Mobile App Pairing
   const [pairingCode, setPairingCode] = useState<string | null>(null);
   const [pairingRotatedAt, setPairingRotatedAt] = useState<string | null>(null);
@@ -143,12 +290,12 @@ export default function SettingsPage() {
 
   // Store / business fields — local form state (saved only on explicit Save)
   type BusinessForm = {
-    businessName: string; timezone: string; currency: string;
+    businessName: string; countryCode: string; timezone: string; currency: string;
     gstin: string; businessAddress: string; businessPhone: string;
     billShowName: boolean; billShowAddress: boolean; billShowPhone: boolean; billShowGstn: boolean;
   };
   const [savedBusiness, setSavedBusiness] = useState<BusinessForm>({
-    businessName: '', timezone: '', currency: '', gstin: '',
+    businessName: '', countryCode: '', timezone: '', currency: '', gstin: '',
     businessAddress: '', businessPhone: '',
     billShowName: true, billShowAddress: true, billShowPhone: true, billShowGstn: false,
   });
@@ -158,6 +305,9 @@ export default function SettingsPage() {
   const resetBusiness = () => setForm(savedBusiness);
 
   useEffect(() => {
+    fetchPrinters();
+    fetchKdsInfo();
+
     api.get('/settings/tax').then((res) => {
       if (res.data.loyalty_expiry_days) setLoyaltyDays(Number(res.data.loyalty_expiry_days));
     }).catch(() => {});
@@ -169,8 +319,10 @@ export default function SettingsPage() {
 
     api.get('/settings/business').then((res) => {
       const d = res.data;
+      const matchedCountry = COUNTRIES.find(c => c.currency === d.currency && c.timezone === d.timezone);
       const loaded: BusinessForm = {
         businessName: d.business_name || '',
+        countryCode: matchedCountry?.code || '',
         timezone: d.timezone || '',
         currency: d.currency || '',
         gstin: d.gstin || '',
@@ -277,8 +429,11 @@ export default function SettingsPage() {
       <Tabs defaultValue="general">
         <TabsList className="mb-6">
           <TabsTrigger value="general">General</TabsTrigger>
-          <TabsTrigger value="printing">Printing</TabsTrigger>
+          <TabsTrigger value="printers">Printers</TabsTrigger>
+          <TabsTrigger value="kds">KDS Pairing</TabsTrigger>
+          <TabsTrigger value="printing">Print Options</TabsTrigger>
           <TabsTrigger value="bill-template">Bill Template</TabsTrigger>
+          <TabsTrigger value="updates">Updates</TabsTrigger>
         </TabsList>
 
         {/* ================================================================
@@ -307,6 +462,31 @@ export default function SettingsPage() {
                       className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-brand" />
                   ) : (
                     <p className="font-medium text-gray-900">{form.businessName || currentTenant?.business_name}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-500 mb-1">Country</label>
+                  {isAdmin ? (
+                    <select value={form.countryCode}
+                      onChange={(e) => {
+                        const country = COUNTRIES.find(c => c.code === e.target.value);
+                        setForm((p) => ({
+                          ...p,
+                          countryCode: e.target.value,
+                          currency: country?.currency || p.currency,
+                          timezone: country?.timezone || p.timezone,
+                        }));
+                      }}
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-brand bg-white">
+                      <option value="">Select country...</option>
+                      {COUNTRIES.map((c) => (
+                        <option key={c.code} value={c.code}>{c.name} ({c.currencyCode})</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="font-medium text-gray-900">
+                      {COUNTRIES.find(c => c.code === form.countryCode)?.name || '—'}
+                    </p>
                   )}
                 </div>
                 <div>
@@ -561,6 +741,250 @@ export default function SettingsPage() {
         </TabsContent>
 
         {/* ================================================================
+            TAB: Printers (hardware — IP / USB / WebUSB)
+        ================================================================ */}
+        <TabsContent value="printers">
+          <div className="space-y-6">
+            <div className="bg-white rounded-xl border border-gray-100 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Printer size={20} className="text-gray-500" />
+                  <h2 className="font-semibold text-gray-900">Hardware Printers</h2>
+                </div>
+                {!showPrinterForm && (
+                  <button onClick={openAddPrinter}
+                    className="flex items-center gap-2 px-4 py-2 text-sm bg-brand text-white rounded-lg hover:opacity-90 font-medium">
+                    <Plus size={14} /> Add Printer
+                  </button>
+                )}
+              </div>
+
+              {/* Printer list */}
+              {hwPrinters.length === 0 && !showPrinterForm && (
+                <div className="py-10 text-center text-gray-400">
+                  <Printer size={36} className="mx-auto mb-2 opacity-30" />
+                  <p className="text-sm">No printers configured yet.</p>
+                  <p className="text-xs mt-1">Add an IP, USB, or WebUSB thermal printer.</p>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {hwPrinters.map((p) => (
+                  <div key={p.id} className={`flex items-center gap-3 rounded-xl border p-4 ${p.is_default ? 'border-brand bg-brand/5' : 'border-gray-200'}`}>
+                    <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-gray-100 shrink-0">
+                      {p.connection_type === 'network' ? <Wifi size={18} className="text-gray-500" /> :
+                       p.connection_type === 'webusb' ? <Usb size={18} className="text-blue-500" /> :
+                       <Usb size={18} className="text-gray-500" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-gray-900 text-sm">{p.name}</span>
+                        {p.is_default === 1 && (
+                          <span className="text-[10px] bg-brand/10 text-brand px-2 py-0.5 rounded-full font-medium">Default</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {p.connection_type === 'network' ? `${p.ip_address}:${p.port}` :
+                         p.connection_type === 'usb' ? (p.usb_device_path || '/dev/usb/lp0') :
+                         'Browser WebUSB'}
+                        {' · '}{p.paper_width}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={() => testPrinterHw(p)} disabled={testingPrinterId === p.id}
+                        title="Test print"
+                        className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-700 disabled:opacity-40">
+                        <TestTube2 size={15} />
+                      </button>
+                      {p.is_default !== 1 && (
+                        <button onClick={() => setDefaultPrinter(p.id)} title="Set as default"
+                          className="p-2 rounded-lg hover:bg-yellow-50 text-gray-400 hover:text-yellow-600">
+                          <Star size={15} />
+                        </button>
+                      )}
+                      <button onClick={() => openEditPrinter(p)} title="Edit"
+                        className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-700">
+                        <Settings size={15} />
+                      </button>
+                      <button onClick={() => deletePrinterHw(p.id)} title="Delete"
+                        className="p-2 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600">
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add / Edit form */}
+              {showPrinterForm && (
+                <div className="mt-5 pt-5 border-t border-gray-100">
+                  <h3 className="font-semibold text-gray-900 text-sm mb-4">
+                    {editingPrinterId ? 'Edit Printer' : 'Add Printer'}
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Printer Name *</label>
+                      <input type="text" value={printerForm.name}
+                        onChange={(e) => setPrinterForm((p) => ({ ...p, name: e.target.value }))}
+                        placeholder="e.g. Kitchen Printer"
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-brand" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Connection Type</label>
+                      <select value={printerForm.connection_type}
+                        onChange={(e) => setPrinterForm((p) => ({ ...p, connection_type: e.target.value as HwPrinter['connection_type'] }))}
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-brand">
+                        <option value="network">Network (IP/TCP)</option>
+                        <option value="usb">USB (device path)</option>
+                        <option value="webusb">WebUSB (browser)</option>
+                      </select>
+                    </div>
+
+                    {printerForm.connection_type === 'network' && (<>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">IP Address *</label>
+                        <input type="text" value={printerForm.ip_address}
+                          onChange={(e) => setPrinterForm((p) => ({ ...p, ip_address: e.target.value }))}
+                          placeholder="192.168.1.100"
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-brand" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">Port</label>
+                        <input type="number" value={printerForm.port}
+                          onChange={(e) => setPrinterForm((p) => ({ ...p, port: e.target.value }))}
+                          placeholder="9100"
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-brand" />
+                      </div>
+                    </>)}
+
+                    {printerForm.connection_type === 'usb' && (
+                      <div className="md:col-span-2">
+                        <label className="block text-xs text-gray-500 mb-1">USB Device Path</label>
+                        <input type="text" value={printerForm.usb_device_path}
+                          onChange={(e) => setPrinterForm((p) => ({ ...p, usb_device_path: e.target.value }))}
+                          placeholder="/dev/usb/lp0"
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-brand" />
+                        <p className="text-xs text-gray-400 mt-1">Linux: /dev/usb/lp0  · macOS: /dev/cu.usbserial-XXX</p>
+                      </div>
+                    )}
+
+                    {printerForm.connection_type === 'webusb' && (
+                      <div className="md:col-span-2 bg-blue-50 rounded-lg p-3 text-sm text-blue-700">
+                        WebUSB printers are connected directly from the browser via the toolbar Connect button.
+                        Save this entry to remember the paper width preference.
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Paper Width</label>
+                      <select value={printerForm.paper_width}
+                        onChange={(e) => setPrinterForm((p) => ({ ...p, paper_width: e.target.value }))}
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-brand">
+                        <option value="58mm">58mm (2.5")</option>
+                        <option value="80mm">80mm (3.1")</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex gap-2">
+                    <button onClick={savePrinterHw} disabled={savingPrinter}
+                      className="px-5 py-2 text-sm bg-brand text-white rounded-lg hover:opacity-90 disabled:opacity-50 font-medium">
+                      {savingPrinter ? 'Saving...' : editingPrinterId ? 'Save Changes' : 'Add Printer'}
+                    </button>
+                    <button onClick={() => setShowPrinterForm(false)}
+                      className="px-5 py-2 text-sm border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 font-medium">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+              <strong>Tip:</strong> The default printer is used for auto-print KOT and bill. Set one printer as default, then configure auto-print in <em>Print Options</em>.
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* ================================================================
+            TAB: KDS Pairing
+        ================================================================ */}
+        <TabsContent value="kds">
+          <div className="max-w-2xl space-y-6">
+            <div className="bg-white rounded-xl border border-gray-100 p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <ChefHat size={20} className="text-gray-500" />
+                <h2 className="font-semibold text-gray-900">Kitchen Display (KDS) Pairing</h2>
+              </div>
+              <p className="text-sm text-gray-500 mb-5">
+                Open a browser on any tablet or monitor on the same WiFi and scan the QR code (or type the URL) to connect it as a Kitchen Display.
+              </p>
+
+              {kdsInfoLoading && (
+                <div className="flex items-center justify-center py-10">
+                  <div className="w-6 h-6 border-2 border-brand border-t-transparent rounded-full animate-spin" />
+                </div>
+              )}
+
+              {kdsInfo && !kdsInfoLoading && (
+                <div className="flex flex-col sm:flex-row gap-6 items-start">
+                  {/* QR code */}
+                  <div className="shrink-0">
+                    {kdsInfo.qr_data_url ? (
+                      <img src={kdsInfo.qr_data_url} alt="KDS QR Code"
+                        className="w-48 h-48 rounded-xl border border-gray-200" />
+                    ) : (
+                      <div className="w-48 h-48 rounded-xl border border-gray-200 flex items-center justify-center text-gray-400">
+                        <QrCode size={48} />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* URLs */}
+                  <div className="flex-1 space-y-4">
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Direct IP (recommended)</p>
+                      <a href={kdsInfo.ip_url} target="_blank" rel="noopener noreferrer"
+                        className="block font-mono text-sm text-brand break-all hover:underline">
+                        {kdsInfo.ip_url}
+                      </a>
+                      <p className="text-xs text-gray-400 mt-1">Works on all devices. IP may change if the POS machine reconnects to WiFi.</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">mDNS (always-stable)</p>
+                      <a href={kdsInfo.mdns_url} target="_blank" rel="noopener noreferrer"
+                        className="block font-mono text-sm text-gray-700 break-all hover:underline">
+                        {kdsInfo.mdns_url}
+                      </a>
+                      <p className="text-xs text-gray-400 mt-1">Resolves via Bonjour/mDNS. Works on iOS, macOS, and most Android (Chrome). May need mDNS enabled on router.</p>
+                    </div>
+
+                    <button onClick={fetchKdsInfo} disabled={kdsInfoLoading}
+                      className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-800">
+                      <RefreshCw size={14} className={kdsInfoLoading ? 'animate-spin' : ''} />
+                      Refresh URLs
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {!kdsInfo && !kdsInfoLoading && (
+                <button onClick={fetchKdsInfo}
+                  className="px-4 py-2 text-sm bg-brand text-white rounded-lg hover:opacity-90 font-medium">
+                  Load KDS Info
+                </button>
+              )}
+            </div>
+
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
+              <strong>How it works:</strong> Flo runs an embedded HTTP server on port 3001.
+              The KDS page at <code className="bg-blue-100 px-1 rounded">/kds</code> connects via WebSocket for real-time order updates.
+              No app install needed — just a modern browser on the same network.
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* ================================================================
             TAB: Printing
         ================================================================ */}
         <TabsContent value="printing">
@@ -697,6 +1121,76 @@ export default function SettingsPage() {
           <div className="mt-6 flex gap-2">
             <button onClick={saveBillTemplate} className="px-5 py-2 text-sm bg-brand text-white rounded-lg hover:opacity-90 font-medium">Save</button>
             <button onClick={resetBillTemplate} className="px-5 py-2 text-sm border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 font-medium">Cancel</button>
+          </div>
+        </TabsContent>
+
+        {/* ================================================================
+            TAB: Updates
+        ================================================================ */}
+        <TabsContent value="updates">
+          <div className="bg-white rounded-xl border border-gray-100 p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <RefreshCw size={20} className="text-gray-500" />
+              <h2 className="font-semibold text-gray-900">Software Updates</h2>
+            </div>
+            <p className="text-sm text-gray-500 mb-6">
+              Flo Desktop checks for updates automatically. You can also check manually below.
+            </p>
+
+            {updateStatus && (
+              <div className={`p-4 rounded-lg mb-4 ${
+                updateStatus.status === 'available' || updateStatus.status === 'ready-to-install' 
+                  ? 'bg-green-50 border border-green-200'
+                  : updateStatus.status === 'error'
+                  ? 'bg-red-50 border border-red-200'
+                  : updateStatus.status === 'dev-mode'
+                  ? 'bg-yellow-50 border border-yellow-200'
+                  : 'bg-gray-50 border border-gray-200'
+              }`}>
+                <div className="flex items-center gap-2 mb-2">
+                  {updateStatus.status === 'checking' && <RefreshCw size={16} className="animate-spin text-brand" />}
+                  {updateStatus.status === 'available' && <Check size={16} className="text-green-600" />}
+                  {updateStatus.status === 'up-to-date' && <CheckCircle2 size={16} className="text-green-600" />}
+                  {updateStatus.status === 'ready-to-install' && <CheckCircle2 size={16} className="text-green-600" />}
+                  {updateStatus.status === 'downloading' && <RefreshCw size={16} className="animate-spin text-brand" />}
+                  {updateStatus.status === 'error' && <span className="text-red-600">✕</span>}
+                  {updateStatus.status === 'dev-mode' && <span className="text-yellow-600">⚠</span>}
+                  <span className="font-medium capitalize">{updateStatus.status.replace(/-/g, ' ')}</span>
+                </div>
+                {updateStatus.version && (
+                  <p className="text-sm text-gray-600">Version: {updateStatus.version}</p>
+                )}
+                {updateStatus.percent !== undefined && (
+                  <div className="mt-2">
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div 
+                        className="bg-brand h-2 rounded-full transition-all" 
+                        style={{ width: `${updateStatus.percent}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">{updateStatus.percent.toFixed(1)}% downloaded</p>
+                  </div>
+                )}
+                {updateStatus.error && (
+                  <p className="text-sm text-red-600 mt-1">{updateStatus.error}</p>
+                )}
+                {updateStatus.status === 'up-to-date' && (
+                  <p className="text-sm text-gray-600">You're running the latest version!</p>
+                )}
+                {updateStatus.status === 'dev-mode' && (
+                  <p className="text-sm text-yellow-600">Update checking is disabled in development mode.</p>
+                )}
+              </div>
+            )}
+
+            <button
+              onClick={handleCheckUpdates}
+              disabled={updateStatus?.status === 'checking' || updateStatus?.status === 'downloading'}
+              className="px-4 py-2 bg-brand text-white rounded-lg hover:opacity-90 disabled:opacity-50 text-sm font-medium flex items-center gap-2"
+            >
+              <RefreshCw size={16} className={updateStatus?.status === 'checking' ? 'animate-spin' : ''} />
+              {updateStatus?.status === 'checking' ? 'Checking...' : 'Check for Updates'}
+            </button>
           </div>
         </TabsContent>
       </Tabs>

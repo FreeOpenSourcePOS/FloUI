@@ -5,20 +5,25 @@ import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/store/auth';
 
 export function getLandingPage(role?: string, businessType?: string): string {
-  if ((role === 'chef' || role === 'cook') && businessType === 'restaurant') return '/kitchen-display';
+  if ((role === 'chef' || role === 'cook') && businessType === 'restaurant') return '/kds';
   return '/pos';
 }
+
+const PUBLIC_PATHS = ['/kds', '/auth/login', '/auth/register'];
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, currentTenant, loading, loadFromStorage } = useAuthStore();
   const router = useRouter();
   const pathname = usePathname();
 
+  const isPublicPath = PUBLIC_PATHS.some(p => pathname === p || pathname?.startsWith(p + '/'));
+
   useEffect(() => {
     loadFromStorage();
   }, [loadFromStorage]);
 
   useEffect(() => {
+    if (isPublicPath) return;
     if (!loading) {
       if (!user) {
         router.push('/auth/login');
@@ -28,7 +33,11 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         router.replace(getLandingPage(currentTenant.role, currentTenant.business_type));
       }
     }
-  }, [user, currentTenant, loading, router, pathname]);
+  }, [user, currentTenant, loading, router, pathname, isPublicPath]);
+
+  if (isPublicPath) {
+    return <>{children}</>;
+  }
 
   if (loading) {
     return (

@@ -134,8 +134,8 @@ export default function POSPage() {
         }
       }
     } catch (err: unknown) {
-      const error = err as { response?: { data?: { message?: string } } };
-      toast.error(error.response?.data?.message || 'Failed to place order');
+      const error = err as { response?: { data?: { message?: string; error?: string } } };
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Failed to place order');
     } finally {
       setSubmitting(false);
     }
