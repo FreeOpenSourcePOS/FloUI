@@ -61,7 +61,7 @@ export default function AppSidebar() {
             <SidebarMenuButton size="lg" asChild>
               <Link href={homeHref}>
                 <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-white">
-                  <img src="/logo.svg" alt="Flo" width={20} height={20} />
+                  <img src="/logo.png" alt="Flo" width={20} height={20} />
                 </div>
                 <div className="flex flex-col gap-0.5 leading-none">
                   <span className="font-semibold">Flo</span>

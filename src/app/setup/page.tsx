@@ -129,7 +129,7 @@ export default function SetupPage() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted px-4 py-12">
       <div className="w-full max-w-xl">
         <div className="text-center mb-8">
-          <img src="/logo.svg" alt="Flo" width={80} height={52} className="mx-auto mb-4" />
+          <img src="/logo.png" alt="Flo" width={80} height={52} className="mx-auto mb-4" />
           <h1 className="text-3xl font-bold">Welcome to Flo</h1>
           <p className="text-muted-foreground mt-2">Let&apos;s get you set up in a few steps</p>
         </div>
