@@ -1,20 +1,22 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/store/auth';
+import api from '@/lib/api';
 
 export function getLandingPage(role?: string, businessType?: string): string {
-  if ((role === 'chef' || role === 'cook') && businessType === 'restaurant') return '/kds';
   return '/pos';
 }
 
-const PUBLIC_PATHS = ['/kds', '/auth/login', '/auth/register'];
+const PUBLIC_PATHS = ['/kds', '/auth/login', '/auth/register', '/setup'];
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, currentTenant, loading, loadFromStorage } = useAuthStore();
   const router = useRouter();
   const pathname = usePathname();
+  const [needsSetup, setNeedsSetup] = useState(false);
+  const [checkingSetup, setCheckingSetup] = useState(true);
 
   const isPublicPath = PUBLIC_PATHS.some(p => pathname === p || pathname?.startsWith(p + '/'));
 
@@ -23,21 +25,39 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   }, [loadFromStorage]);
 
   useEffect(() => {
+    if (!isPublicPath && !loading && !user) {
+      api.get('/auth/setup/status')
+        .then(({ data }) => {
+          if (data.needsSetup) {
+            setNeedsSetup(true);
+            router.push('/setup');
+          }
+        })
+        .catch(() => {})
+        .finally(() => setCheckingSetup(false));
+    } else {
+      setCheckingSetup(false);
+    }
+  }, [isPublicPath, loading, user, router]);
+
+  useEffect(() => {
     if (isPublicPath) return;
-    if (!loading) {
+    if (!checkingSetup && !loading) {
       if (!user) {
-        router.push('/auth/login');
+        if (!needsSetup) {
+          router.push('/auth/login');
+        }
       } else if (!currentTenant) {
         router.push('/auth/login?select_tenant=true');
       }
     }
-  }, [user, currentTenant, loading, router, pathname, isPublicPath]);
+  }, [user, currentTenant, loading, router, pathname, isPublicPath, checkingSetup, needsSetup]);
 
-  if (isPublicPath) {
+  if (isPublicPath || needsSetup) {
     return <>{children}</>;
   }
 
-  if (loading) {
+  if (loading || checkingSetup) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="flex flex-col items-center gap-3">

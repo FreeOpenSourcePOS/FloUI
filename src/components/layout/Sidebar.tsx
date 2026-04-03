@@ -9,7 +9,6 @@ import {
   Grid3X3,
   Users,
   UserCog,
-  ChefHat,
   Settings,
   LogOut,
 } from 'lucide-react';
@@ -32,7 +31,6 @@ import {
 // null = show for all business types
 const ALL_NAV_ITEMS = [
   { href: '/pos',             label: 'POS',          icon: ShoppingCart,  roles: ['owner', 'manager', 'cashier'],              businessTypes: null },
-  { href: '/kds',             label: 'Kitchen',      icon: ChefHat,       roles: ['owner', 'manager', 'cashier', 'cook'],      businessTypes: ['restaurant'] },
   { href: '/orders',          label: 'Orders',       icon: ClipboardList, roles: ['owner', 'manager', 'cashier'],              businessTypes: null },
   { href: '/products',        label: 'Products',     icon: Package,       roles: ['owner', 'manager'],                         businessTypes: null },
   { href: '/tables',          label: 'Tables',       icon: Grid3X3,       roles: ['owner', 'manager'],                         businessTypes: ['restaurant'] },
