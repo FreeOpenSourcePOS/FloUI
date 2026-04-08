@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X } from 'lucide-react';
+import { X, ShoppingCart } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
@@ -10,15 +10,26 @@ import type { Table, Order, Bill } from '@/lib/types';
 interface Props {
   table: Table;
   currency: string;
+  cartItemCount: number;
   onClose: () => void;
   onAddItems: (table: Table, order: Order) => void;
   onPayment: (bill: Bill) => void;
+  onAddCartToOrder?: (table: Table, order: Order) => void;
 }
 
-export default function TableCheckoutModal({ table, currency, onClose, onAddItems, onPayment }: Props) {
+export default function TableCheckoutModal({ 
+  table, 
+  currency, 
+  cartItemCount,
+  onClose, 
+  onAddItems, 
+  onPayment, 
+  onAddCartToOrder 
+}: Props) {
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [addingItems, setAddingItems] = useState(false);
 
   useEffect(() => {
     const fetchOrder = async () => {
@@ -26,7 +37,6 @@ export default function TableCheckoutModal({ table, currency, onClose, onAddItem
         const { data } = await api.get(`/tables/${table.id}`);
         const t = data.table;
         if (t.activeOrder) {
-          // Fetch full order with items
           const orderRes = await api.get(`/orders/${t.activeOrder.id}`);
           setOrder(orderRes.data.order);
         }
@@ -43,12 +53,10 @@ export default function TableCheckoutModal({ table, currency, onClose, onAddItem
     if (!order) return;
     setGenerating(true);
     try {
-      // Check if bill already exists
       if (order.bill) {
         onPayment(order.bill);
         return;
       }
-      // Generate bill
       const { data } = await api.post('/bills/generate', { order_id: order.id });
       onPayment(data.bill);
     } catch (err: unknown) {
@@ -57,6 +65,12 @@ export default function TableCheckoutModal({ table, currency, onClose, onAddItem
     } finally {
       setGenerating(false);
     }
+  };
+
+  const handleAddCartToOrder = async () => {
+    if (!order || !onAddCartToOrder) return;
+    setAddingItems(true);
+    onAddCartToOrder(table, order);
   };
 
   if (loading) {
@@ -80,6 +94,9 @@ export default function TableCheckoutModal({ table, currency, onClose, onAddItem
     );
   }
 
+  // Filter active items (not cancelled)
+  const activeItems = (order.items || []).filter((item: any) => item.status !== 'cancelled');
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl w-full max-w-md max-h-[85vh] flex flex-col">
@@ -87,8 +104,12 @@ export default function TableCheckoutModal({ table, currency, onClose, onAddItem
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-lg font-bold text-gray-900">{table.name}</h2>
-              <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs font-medium rounded-full">
-                {order.bill ? (order.bill.payment_status === 'paid' ? 'PAID' : 'UNPAID') : 'UNBILLED'}
+              <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+                order.bill?.payment_status === 'paid' 
+                  ? 'bg-green-100 text-green-700' 
+                  : 'bg-orange-100 text-orange-700'
+              }`}>
+                {order.bill?.payment_status === 'paid' ? 'PAID' : 'UNPAID'}
               </span>
             </div>
             <p className="text-sm text-gray-500">Order #{order.order_number}</p>
@@ -99,31 +120,26 @@ export default function TableCheckoutModal({ table, currency, onClose, onAddItem
         </div>
 
         <div className="flex-1 overflow-y-auto p-5">
-          <div className="space-y-2">
-            {(order.items || []).map((item) => (
-              <div key={item.id} className="flex justify-between items-start py-2 border-b border-gray-50 last:border-0">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900">
-                    {item.quantity} x {item.product_name}
-                  </p>
-                  {item.special_instructions && (
-                    <p className="text-xs text-gray-400 italic mt-0.5">{item.special_instructions}</p>
-                  )}
-                  {item.addons && Array.isArray(item.addons) && item.addons.length > 0 && (
-                    <div className="mt-0.5">
-                      {item.addons.map((a: Record<string, unknown>, i: number) => (
-                        <p key={i} className="text-xs text-gray-400">
-                          + {String(a.name)} {Number(a.price) > 0 && `(${currency}${Number(a.price).toLocaleString()})`}
-                        </p>
-                      ))}
-                    </div>
-                  )}
+          {/* Existing order items - shown as disabled/reference */}
+          <div className="mb-3">
+            <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Previous Items (already ordered)</p>
+            <div className="space-y-1">
+              {activeItems.map((item) => (
+                <div key={item.id} className="flex justify-between items-start py-1.5 px-2 bg-gray-50 rounded-lg opacity-60">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-gray-500">
+                      {item.quantity}x {item.product_name}
+                    </p>
+                    {item.special_instructions && (
+                      <p className="text-xs text-gray-400 italic">{item.special_instructions}</p>
+                    )}
+                  </div>
+                  <span className="text-xs text-gray-400 ml-2">
+                    {currency}{Number(item.total).toLocaleString()}
+                  </span>
                 </div>
-                <span className="text-sm font-medium text-gray-900 ml-3">
-                  {currency}{Number(item.total).toLocaleString()}
-                </span>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
 
@@ -149,14 +165,34 @@ export default function TableCheckoutModal({ table, currency, onClose, onAddItem
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3 pt-2">
-            <Button variant="outline" onClick={() => onAddItems(table, order)}>
-              Add Items
-            </Button>
-            <Button onClick={handleCheckout} disabled={generating}>
-              {generating ? 'Generating...' : 'Checkout'}
-            </Button>
-          </div>
+          {/* Show different buttons based on cart state */}
+          {cartItemCount > 0 ? (
+            // Cart has items - show "Add items to order" option
+            <div className="space-y-2">
+              <Button 
+                onClick={handleAddCartToOrder} 
+                disabled={addingItems}
+                className="w-full"
+                size="lg"
+              >
+                <ShoppingCart size={16} className="mr-2" />
+                {addingItems ? 'Adding...' : `Add ${cartItemCount} items to order`}
+              </Button>
+              <Button onClick={handleCheckout} variant="outline" className="w-full" disabled={generating}>
+                {generating ? 'Generating...' : 'Checkout instead'}
+              </Button>
+            </div>
+          ) : (
+            // Cart empty - show both options
+            <div className="grid grid-cols-2 gap-3">
+              <Button variant="outline" onClick={() => onAddItems(table, order)}>
+                Add Items
+              </Button>
+              <Button onClick={handleCheckout} disabled={generating}>
+                {generating ? 'Generating...' : 'Checkout'}
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -108,14 +108,14 @@ export interface Table {
 }
 
 export interface Customer {
-  id: number;
+  id: string | number;
   phone: string;
   country_code: string;
   name: string;
   email: string | null;
-  visits_count: number;
-  total_spent: number;
-  last_visit_at: string | null;
+  visits_count?: number;
+  total_spent?: number;
+  last_visit_at?: string | null;
   wallet_balance?: number;
   global_customer_id?: number | null;
   dietary_preferences?: string[] | null;
@@ -126,7 +126,7 @@ export interface Order {
   id: number;
   order_number: string;
   table_id: number | null;
-  customer_id: number | null;
+  customer_id: number | string | null;
   type: 'dine_in' | 'takeaway' | 'delivery' | 'online';
   status: 'pending' | 'preparing' | 'ready' | 'served' | 'completed' | 'cancelled';
   subtotal: number;
@@ -164,7 +164,7 @@ export interface Bill {
   id: number;
   bill_number: string;
   order_id: number;
-  customer_id?: number | null;
+  customer_id?: number | string | null;
   subtotal: number;
   tax_amount: number;
   discount_amount: number;
@@ -180,15 +180,14 @@ export interface Bill {
 }
 
 export interface Staff {
-  id: number;
-  user_id: number | null;
-  employee_code: string;
+  id: string;
+  name: string;
+  email: string | null;
   role: string;
-  permissions: string[] | null;
-  hourly_rate: number | null;
-  monthly_salary: number | null;
-  is_active: boolean;
-  joined_at: string | null;
+  pin: string | null;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface KitchenStation {

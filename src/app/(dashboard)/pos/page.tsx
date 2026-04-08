@@ -28,7 +28,7 @@ export default function POSPage() {
   const isRestaurant = (currentTenant?.business_type ?? 'restaurant') === 'restaurant';
   const cart = useCartStore();
   const heldOrders = useHeldOrdersStore();
-  const { customerMandatory, autoPrintKot } = usePosSettingsStore();
+  const { customerMandatory, autoPrintKot, billingType } = usePosSettingsStore();
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -45,6 +45,7 @@ export default function POSPage() {
   const [paymentBill, setPaymentBill] = useState<Bill | null>(null);
   const [showPaymentPrompt, setShowPaymentPrompt] = useState<{ orderId: number } | null>(null);
   const [showCustomerPrompt, setShowCustomerPrompt] = useState(false);
+  const [showPrepaidCheckout, setShowPrepaidCheckout] = useState(false);
 
   const currency = currentTenant?.currency === 'THB' ? '฿' : '₹';
   const { printBill, printKot } = usePrinterStore();
@@ -102,6 +103,13 @@ export default function POSPage() {
       return;
     }
 
+    // For prepaid orders, show checkout directly (don't place order yet)
+    if (billingType === 'prepaid') {
+      setShowPrepaidCheckout(true);
+      return;
+    }
+
+    // For postpaid orders, place order first
     setSubmitting(true);
     try {
       const { data } = await api.post('/orders', {
@@ -136,6 +144,54 @@ export default function POSPage() {
     } catch (err: unknown) {
       const error = err as { response?: { data?: { message?: string; error?: string } } };
       toast.error(error.response?.data?.message || error.response?.data?.error || 'Failed to place order');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Handle prepaid checkout - place order and pay in one step
+  const handlePrepaidCheckout = async (method: string, amount: number) => {
+    setShowPrepaidCheckout(false);
+    setSubmitting(true);
+    try {
+      // Step 1: Create the order
+      const { data: orderData } = await api.post('/orders', {
+        table_id: cart.tableId,
+        customer_id: cart.customerId,
+        type: cart.orderType,
+        guest_count: cart.guestCount,
+        items: cart.items.map((item) => ({
+          product_id: item.product.id,
+          quantity: item.quantity,
+          addons: item.addons.length > 0
+            ? item.addons.map((a) => ({ id: a.id, name: a.name, price: a.price }))
+            : null,
+          special_instructions: item.special_instructions || null,
+        })),
+      });
+
+      // Step 2: Generate bill
+      const { data: billData } = await api.post('/bills/generate', { order_id: orderData.order.id });
+
+      // Step 3: Record payment
+      await api.post(`/bills/${billData.bill.id}/payment`, { amount, method });
+
+      toast.success(`Order #${orderData.order.order_number} paid!`);
+      if (cart.tableId) heldOrders.removeHeldOrder(cart.tableId);
+      cart.clearCart();
+      setMobileCartOpen(false);
+      await refreshTables();
+
+      if (autoPrintKot) {
+        try {
+          await printKot(orderData.order as Order);
+        } catch {
+          toast.error('KOT print failed — check printer connection');
+        }
+      }
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string; error?: string } } };
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Failed to process order');
     } finally {
       setSubmitting(false);
     }
@@ -179,6 +235,36 @@ export default function POSPage() {
     cart.setTableId(table.id);
     cart.setOrderType('dine_in');
     toast(`Adding items to order #${order.order_number}. Place order when ready.`, { icon: 'ℹ️' });
+  };
+
+  // Add cart items directly to existing order
+  const handleAddCartToOrder = async (table: Table, order: Order) => {
+    if (cart.items.length === 0) {
+      toast.error('Cart is empty');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await api.post(`/orders/${order.id}/items`, {
+        items: cart.items.map((item) => ({
+          product_id: item.product.id,
+          quantity: item.quantity,
+          addons: item.addons.length > 0
+            ? item.addons.map((a) => ({ id: a.id, name: a.name, price: a.price }))
+            : null,
+          special_instructions: item.special_instructions || null,
+        })),
+      });
+      toast.success(`Items added to order #${order.order_number}`);
+      cart.clearCart();
+      setCheckoutTable(null);
+      refreshTables();
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } };
+      toast.error(error.response?.data?.message || 'Failed to add items');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handlePaymentComplete = async () => {
@@ -280,9 +366,11 @@ export default function POSPage() {
         <TableCheckoutModal
           table={checkoutTable}
           currency={currency}
+          cartItemCount={cart.itemCount()}
           onClose={() => setCheckoutTable(null)}
           onAddItems={handleAddItemsToOrder}
           onPayment={(bill) => { setCheckoutTable(null); setPaymentBill(bill); }}
+          onAddCartToOrder={handleAddCartToOrder}
         />
       )}
 
@@ -310,23 +398,85 @@ export default function POSPage() {
         </div>
       )}
 
+      {/* Prepaid Checkout Modal - Payment BEFORE order is placed */}
+      {showPrepaidCheckout && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold">Prepaid Checkout</h3>
+              <button onClick={() => setShowPrepaidCheckout(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">Enter payment to complete order.</p>
+            
+            {/* Cart Summary */}
+            <div className="bg-gray-50 rounded-xl p-4 mb-4">
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-gray-500">Items</span>
+                <span>{cart.itemCount()}</span>
+              </div>
+              <div className="flex justify-between font-bold text-lg">
+                <span>Total</span>
+                <span className="text-brand">{currency}{cart.subtotal().toLocaleString()}</span>
+              </div>
+            </div>
+
+            {/* Payment Method Selection */}
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-gray-700">Payment Method</p>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={() => handlePrepaidCheckout('cash', cart.subtotal())}
+                  className="py-3 rounded-xl border-2 border-gray-200 hover:border-brand hover:bg-brand/5 transition-colors"
+                >
+                  <span className="block text-lg">💵</span>
+                  <span className="text-xs font-medium text-gray-600">Cash</span>
+                </button>
+                <button
+                  onClick={() => handlePrepaidCheckout('card', cart.subtotal())}
+                  className="py-3 rounded-xl border-2 border-gray-200 hover:border-brand hover:bg-brand/5 transition-colors"
+                >
+                  <span className="block text-lg">💳</span>
+                  <span className="text-xs font-medium text-gray-600">Card</span>
+                </button>
+                <button
+                  onClick={() => handlePrepaidCheckout('upi', cart.subtotal())}
+                  className="py-3 rounded-xl border-2 border-gray-200 hover:border-brand hover:bg-brand/5 transition-colors"
+                >
+                  <span className="block text-lg">📱</span>
+                  <span className="text-xs font-medium text-gray-600">UPI</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showPaymentPrompt && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm text-center">
             <h3 className="text-lg font-bold mb-2">Order Placed!</h3>
-            <p className="text-gray-500 text-sm mb-5">Collect payment now?</p>
+            <p className="text-gray-500 text-sm mb-5">
+              {billingType === 'prepaid'
+                ? 'Payment is required for prepaid orders.'
+                : 'Collect payment now or later.'
+              }
+            </p>
             <div className="flex gap-3">
-              <button
-                onClick={() => setShowPaymentPrompt(null)}
-                className="flex-1 py-2.5 border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50"
-              >
-                Skip
-              </button>
+              {billingType === 'postpaid' && (
+                <button
+                  onClick={() => setShowPaymentPrompt(null)}
+                  className="flex-1 py-2.5 border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50"
+                >
+                  Skip
+                </button>
+              )}
               <button
                 onClick={() => handleCollectPayment(showPaymentPrompt.orderId)}
-                className="flex-1 py-2.5 bg-brand text-white rounded-lg text-sm font-medium hover:bg-brand-hover"
+                className={`${billingType === 'prepaid' ? 'w-full' : 'flex-1'} py-2.5 bg-brand text-white rounded-lg text-sm font-medium hover:bg-brand-hover`}
               >
-                Collect Payment
+                Checkout
               </button>
             </div>
           </div>

@@ -4,39 +4,36 @@ import { useState, useEffect } from 'react';
 import api from '@/lib/api';
 import { useAuthStore } from '@/store/auth';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Trash2 } from 'lucide-react';
+import { CreditCard, Trash2, RotateCcw, Clock } from 'lucide-react';
 import toast from 'react-hot-toast';
-import type { Order } from '@/lib/types';
+import PaymentModal from '@/components/pos/PaymentModal';
+import type { Order, Bill } from '@/lib/types';
 
-const statusColors: Record<string, string> = {
-  pending: 'bg-yellow-100 text-yellow-800',
-  preparing: 'bg-blue-100 text-blue-800',
-  ready: 'bg-green-100 text-green-800',
-  served: 'bg-brand-light text-brand',
-  completed: 'bg-gray-100 text-gray-800',
-  cancelled: 'bg-red-100 text-red-800',
+const itemStatusConfig: Record<string, { icon: string; color: string; label: string }> = {
+  pending: { icon: '⏳', color: 'text-yellow-600', label: 'Waiting' },
+  preparing: { icon: '🔵', color: 'text-blue-600', label: 'Preparing' },
+  ready: { icon: '🟢', color: 'text-green-600', label: 'Ready' },
+  served: { icon: '✅', color: 'text-purple-600', label: 'Served' },
+  cancelled: { icon: '❌', color: 'text-red-400', label: 'Cancelled' },
 };
 
-const statusFlow = ['pending', 'preparing', 'ready', 'served', 'completed'];
+type FilterType = 'all' | 'active' | 'unpaid';
 
 export default function OrdersPage() {
   const { currentTenant } = useAuthStore();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<string>('active');
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [filter, setFilter] = useState<FilterType>('active');
+  const [paymentBill, setPaymentBill] = useState<Bill | null>(null);
+  const [generatingBill, setGeneratingBill] = useState<number | null>(null);
 
   const currency = currentTenant?.currency === 'THB' ? '฿' : '₹';
 
+  const isOwnerOrManager = currentTenant?.role === 'owner' || currentTenant?.role === 'manager';
+
   const fetchOrders = async () => {
     try {
-      const params = filter === 'active'
-        ? { today: 1, per_page: 50 }
-        : filter === 'all'
-        ? { per_page: 50 }
-        : { status: filter, per_page: 50 };
-      const { data } = await api.get('/orders', { params });
+      const { data } = await api.get('/orders', { params: { per_page: 50 } });
       setOrders(data.orders || []);
     } catch {
       toast.error('Failed to load orders');
@@ -49,191 +46,221 @@ export default function OrdersPage() {
     fetchOrders();
     const interval = setInterval(fetchOrders, 15000);
     return () => clearInterval(interval);
-  }, [filter]);
+  }, []);
 
-  const updateStatus = async (orderId: number, status: string) => {
+  const isOrderPaid = (order: Order) => order.bill?.payment_status === 'paid';
+
+  const getTimeSince = (dateStr: string) => {
+    const minutes = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    return `${Math.floor(minutes / 60)}h ${minutes % 60}m ago`;
+  };
+
+  const filteredOrders = orders.filter((order) => {
+    if (filter === 'all') return true;
+    if (filter === 'active') return !['completed', 'cancelled'].includes(order.status);
+    if (filter === 'unpaid') return order.bill && order.bill.payment_status !== 'paid';
+    return true;
+  });
+
+  const handleCheckout = async (orderId: number) => {
+    setGeneratingBill(orderId);
     try {
-      await api.patch(`/orders/${orderId}/status`, { status });
-      toast.success(`Order updated to ${status}`);
-      fetchOrders();
-      if (selectedOrder?.id === orderId) {
-        const { data } = await api.get(`/orders/${orderId}`);
-        setSelectedOrder(data.order);
-      }
-    } catch {
-      toast.error('Failed to update order');
+      const { data } = await api.post('/bills/generate', { order_id: orderId });
+      setPaymentBill(data.bill);
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } };
+      toast.error(error.response?.data?.message || 'Failed to generate bill');
+    } finally {
+      setGeneratingBill(null);
     }
   };
 
-  const getNextStatus = (current: string) => {
-    const idx = statusFlow.indexOf(current);
-    return idx >= 0 && idx < statusFlow.length - 1 ? statusFlow[idx + 1] : null;
+  const handlePaymentComplete = () => {
+    setPaymentBill(null);
+    fetchOrders();
   };
 
-  const isOwnerOrManager = currentTenant?.role === 'owner' || currentTenant?.role === 'manager';
-
   const deleteItem = async (orderId: number, itemId: number) => {
-    if (!confirm('Remove this item from the order?')) return;
+    if (!isOwnerOrManager) {
+      toast.error('Only owners and managers can remove items');
+      return;
+    }
+    if (!confirm('Remove this item?')) return;
     try {
-      await api.delete(`/orders/${orderId}/items/${itemId}`);
+      await api.patch(`/orders/${orderId}/items/${itemId}/cancel`, { reason: 'Removed by manager' });
       toast.success('Item removed');
       fetchOrders();
-      if (selectedOrder?.id === orderId) {
-        const { data } = await api.get(`/orders/${orderId}`);
-        setSelectedOrder(data.order);
-      }
     } catch {
       toast.error('Failed to remove item');
     }
   };
 
-  const displayOrders = filter === 'active'
-    ? orders.filter((o) => !['completed', 'cancelled'].includes(o.status))
-    : orders;
+  const restoreItem = async (orderId: number, itemId: number) => {
+    if (!isOwnerOrManager) return;
+    try {
+      await api.patch(`/orders/${orderId}/items/${itemId}/restore`);
+      toast.success('Item restored');
+      fetchOrders();
+    } catch {
+      toast.error('Failed to restore item');
+    }
+  };
+
+  const showCheckout = (order: Order) => {
+    return !isOrderPaid(order) && !['completed', 'cancelled'].includes(order.status);
+  };
 
   return (
-    <div className="flex gap-4 h-[calc(100vh-4rem)]">
-      {/* Order List */}
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-bold text-gray-900">Orders</h1>
-          <div className="flex gap-2">
-            {['active', 'all', 'pending', 'preparing', 'ready', 'completed'].map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize ${
-                  filter === f ? 'bg-brand text-white' : 'bg-white text-gray-600 border border-gray-200'
-                }`}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
+    <div className="flex flex-col h-[calc(100vh-4rem)]">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl font-bold text-gray-900">Orders</h1>
+        <div className="flex gap-2">
+          {(['all', 'active', 'unpaid'] as FilterType[]).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`px-4 py-1.5 rounded-lg text-sm font-medium capitalize ${
+                filter === f
+                  ? 'bg-brand text-white'
+                  : 'bg-white text-gray-600 border border-gray-200 hover:border-gray-400'
+              }`}
+            >
+              {f}
+            </button>
+          ))}
         </div>
-
-        {loading ? (
-          <div className="flex items-center justify-center h-64">
-            <div className="w-8 h-8 border-4 border-brand border-t-transparent rounded-full animate-spin" />
-          </div>
-        ) : (
-          <div className="flex-1 overflow-y-auto space-y-2">
-            {displayOrders.map((order) => (
-              <div
-                key={order.id}
-                onClick={() => setSelectedOrder(order)}
-                className={`bg-white rounded-xl p-4 border cursor-pointer transition-colors ${
-                  selectedOrder?.id === order.id ? 'border-brand ring-1 ring-brand' : 'border-gray-100 hover:border-gray-300'
-                }`}
-              >
-                <div className="flex justify-between items-start">
-                  <div>
-                    <p className="font-bold text-gray-900">#{order.order_number}</p>
-                    <p className="text-sm text-gray-500">
-                      {order.type.replace('_', ' ')} &middot; {order.items?.length || 0} items
-                      {order.table && ` &middot; ${order.table.name}`}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[order.status]}`}>
-                      {order.status}
-                    </span>
-                    <p className="font-bold text-gray-900 mt-1">{currency}{Number(order.total).toLocaleString()}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
-            {displayOrders.length === 0 && (
-              <p className="text-center text-gray-500 py-12">No orders found</p>
-            )}
-          </div>
-        )}
       </div>
 
-      {/* Order Detail */}
-      {selectedOrder && (
-        <div className="w-96 bg-white rounded-xl border border-gray-100 flex flex-col shadow-sm">
-          <div className="p-5 border-b border-gray-100">
-            <div className="flex justify-between items-center">
-              <h2 className="text-lg font-bold text-gray-900">#{selectedOrder.order_number}</h2>
-              <span className={`px-3 py-1 rounded-full text-xs font-medium ${statusColors[selectedOrder.status]}`}>
-                {selectedOrder.status}
-              </span>
-            </div>
-            <p className="text-sm text-gray-500 mt-1">
-              {selectedOrder.type.replace('_', ' ')}
-              {selectedOrder.table && ` — ${selectedOrder.table.name}`}
-              {selectedOrder.guest_count && ` — ${selectedOrder.guest_count} guests`}
-            </p>
-          </div>
+      {/* Orders List */}
+      {loading ? (
+        <div className="flex items-center justify-center flex-1">
+          <div className="w-8 h-8 border-4 border-brand border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : filteredOrders.length === 0 ? (
+        <div className="flex items-center justify-center flex-1 text-gray-400">
+          <p>No orders found</p>
+        </div>
+      ) : (
+        <div className="flex-1 overflow-y-auto space-y-4">
+          {filteredOrders.map((order) => {
+            const activeItems = (order.items || []).filter((i: any) => i.status !== 'cancelled');
+            const cancelledItems = (order.items || []).filter((i: any) => i.status === 'cancelled');
+            const paid = isOrderPaid(order);
 
-          <div className="flex-1 overflow-y-auto p-5">
-            <h3 className="text-sm font-semibold text-gray-500 uppercase mb-3">Items</h3>
-            <div className="space-y-3">
-              {selectedOrder.items?.map((item) => (
-                <div key={item.id} className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-900">
-                      {item.quantity}x {item.product_name}
-                    </p>
-                    {item.special_instructions && (
-                      <p className="text-xs text-gray-400 italic">{item.special_instructions}</p>
+            return (
+              <div
+                key={order.id}
+                className="bg-white rounded-xl border border-gray-100 overflow-hidden"
+              >
+                {/* Order Header */}
+                <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-100">
+                  <div className="flex items-center gap-3">
+                    <span className="font-bold text-gray-900">#{order.order_number}</span>
+                    <span className="text-sm text-gray-500 capitalize">{order.type.replace('_', ' ')}</span>
+                    {order.table && (
+                      <span className="text-sm text-orange-600 font-medium">{order.table.name}</span>
                     )}
+                    <span className="flex items-center gap-1 text-xs text-gray-400">
+                      <Clock size={12} />
+                      {getTimeSince(order.created_at)}
+                    </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium text-gray-900">
-                      {currency}{Number(item.total).toLocaleString()}
-                    </p>
-                    {selectedOrder.status === 'pending' && isOwnerOrManager && (
-                      <button
-                        onClick={() => deleteItem(selectedOrder.id, item.id)}
-                        className="p-1 rounded hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors"
-                        title="Remove item"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                    {paid && (
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Paid</span>
                     )}
+                    <span className="font-bold text-gray-900">{currency}{Number(order.total).toLocaleString()}</span>
                   </div>
                 </div>
-              ))}
-            </div>
 
-            <div className="mt-6 pt-4 border-t border-gray-100 space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Subtotal</span>
-                <span>{currency}{Number(selectedOrder.subtotal).toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Tax</span>
-                <span>{currency}{Number(selectedOrder.tax_amount).toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between font-bold text-lg pt-2 border-t border-gray-100">
-                <span>Total</span>
-                <span className="text-brand">{currency}{Number(selectedOrder.total).toLocaleString()}</span>
-              </div>
-            </div>
-          </div>
+                {/* Items */}
+                <div className="px-4 py-3">
+                  <div className="space-y-2">
+                    {activeItems.map((item: any) => {
+                      const config = itemStatusConfig[item.status] || itemStatusConfig.pending;
+                      return (
+                        <div key={item.id} className="flex items-center justify-between py-1.5">
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <span className="text-xs" title={config.label}>{config.icon}</span>
+                            <span className={`text-sm font-medium ${config.color}`}>
+                              {item.quantity}x
+                            </span>
+                            <span className="text-sm text-gray-900 truncate">{item.product_name}</span>
+                            {item.special_instructions && (
+                              <span className="text-xs text-red-500 italic truncate">"{item.special_instructions}"</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-gray-600">{currency}{Number(item.total).toLocaleString()}</span>
+                            {item.status === 'pending' && isOwnerOrManager && !paid && (
+                              <button
+                                onClick={() => deleteItem(order.id, item.id)}
+                                className="p-1 rounded hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors"
+                                title="Remove item"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
 
-          <div className="p-5 border-t border-gray-100 space-y-2">
-            {getNextStatus(selectedOrder.status) && (
-              <Button
-                onClick={() => updateStatus(selectedOrder.id, getNextStatus(selectedOrder.status)!)}
-                className="w-full capitalize"
-              >
-                Mark as {getNextStatus(selectedOrder.status)}
-              </Button>
-            )}
-            {!['completed', 'cancelled'].includes(selectedOrder.status) && (
-              <Button
-                variant="destructive"
-                onClick={() => updateStatus(selectedOrder.id, 'cancelled')}
-                className="w-full"
-              >
-                Cancel Order
-              </Button>
-            )}
-          </div>
+                  {/* Cancelled items */}
+                  {cancelledItems.length > 0 && isOwnerOrManager && (
+                    <div className="mt-2 pt-2 border-t border-gray-50">
+                      {cancelledItems.map((item: any) => (
+                        <div key={item.id} className="flex items-center justify-between py-1 opacity-50">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs">❌</span>
+                            <span className="text-xs text-gray-400 line-through">
+                              {item.quantity}x {item.product_name}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => restoreItem(order.id, item.id)}
+                            className="p-1 rounded hover:bg-green-50 text-green-400 hover:text-green-600"
+                            title="Restore"
+                          >
+                            <RotateCcw size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer with actions */}
+                {showCheckout(order) && (
+                  <div className="px-4 py-3 border-t border-gray-100 flex justify-end">
+                    <Button
+                      onClick={() => handleCheckout(order.id)}
+                      disabled={generatingBill === order.id}
+                      size="sm"
+                    >
+                      <CreditCard size={14} className="mr-1.5" />
+                      {generatingBill === order.id ? 'Generating...' : 'Checkout'}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
+      )}
+
+      {/* Payment Modal */}
+      {paymentBill && (
+        <PaymentModal
+          bill={paymentBill}
+          currency={currency}
+          onClose={() => setPaymentBill(null)}
+          onPaid={handlePaymentComplete}
+        />
       )}
     </div>
   );

@@ -55,7 +55,7 @@ export function createTestOrder(overrides?: Partial<Order>): Order {
   };
 
   const testCustomer: Customer = {
-    id: 1,
+    id: 'cust-1',
     phone: '9876543210',
     country_code: '+91',
     name: 'John Doe',

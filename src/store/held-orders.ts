@@ -5,14 +5,14 @@ import type { CartItem } from '@/lib/types';
 interface HeldOrder {
   tableId: number;
   items: CartItem[];
-  customerId: number | null;
+  customerId: number | string | null;
   guestCount: number;
   heldAt: string;
 }
 
 interface HeldOrdersState {
   orders: Record<number, HeldOrder>;
-  holdOrder: (tableId: number, items: CartItem[], customerId: number | null, guestCount: number) => void;
+  holdOrder: (tableId: number, items: CartItem[], customerId: number | string | null, guestCount: number) => void;
   restoreOrder: (tableId: number) => HeldOrder | null;
   removeHeldOrder: (tableId: number) => void;
   hasHeldOrder: (tableId: number) => boolean;

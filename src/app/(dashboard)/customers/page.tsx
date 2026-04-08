@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import toast from 'react-hot-toast';
-import { Plus, Search, X, Wallet } from 'lucide-react';
+import { Plus, Search, X, Edit, Wallet } from 'lucide-react';
 import type { Customer } from '@/lib/types';
 
 export default function CustomersPage() {
@@ -17,6 +17,7 @@ export default function CustomersPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [form, setForm] = useState({ name: '', phone: '', email: '', country_code: '+91' });
 
   const fetchCustomers = async () => {
@@ -33,16 +34,32 @@ export default function CustomersPage() {
 
   useEffect(() => { fetchCustomers(); }, [search]);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const openAdd = () => {
+    setEditingCustomer(null);
+    setForm({ name: '', phone: '', email: '', country_code: '+91' });
+    setShowForm(true);
+  };
+
+  const openEdit = (c: Customer) => {
+    setEditingCustomer(c);
+    setForm({ name: c.name, phone: c.phone || '', email: c.email || '', country_code: c.country_code || '+91' });
+    setShowForm(true);
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await api.post('/customers', form);
-      toast.success('Customer added');
+      if (editingCustomer) {
+        await api.put(`/customers/${editingCustomer.id}`, form);
+        toast.success('Customer updated');
+      } else {
+        await api.post('/customers', form);
+        toast.success('Customer added');
+      }
       setShowForm(false);
-      setForm({ name: '', phone: '', email: '', country_code: '+91' });
       fetchCustomers();
-    } catch {
-      toast.error('Failed to add customer');
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to save');
     }
   };
 
@@ -50,7 +67,7 @@ export default function CustomersPage() {
     <div>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Customers</h1>
-        <Button onClick={() => setShowForm(true)}><Plus size={16} className="mr-1" /> Add Customer</Button>
+        <Button onClick={openAdd}><Plus size={16} className="mr-1" /> Add Customer</Button>
       </div>
 
       <div className="relative mb-4">
@@ -71,6 +88,7 @@ export default function CustomersPage() {
               <th className="text-center p-4 text-xs font-medium text-gray-500 uppercase">Visits</th>
               <th className="text-right p-4 text-xs font-medium text-gray-500 uppercase">Total Spent</th>
               <th className="text-right p-4 text-xs font-medium text-gray-500 uppercase">Wallet</th>
+              <th className="text-center p-4 text-xs font-medium text-gray-500 uppercase">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -93,6 +111,11 @@ export default function CustomersPage() {
                     <span className="text-gray-400 text-sm">—</span>
                   )}
                 </td>
+                <td className="p-4 text-center">
+                  <Button variant="ghost" size="sm" onClick={() => openEdit(c)}>
+                    <Edit size={14} />
+                  </Button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -104,17 +127,17 @@ export default function CustomersPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-bold">Add Customer</h2>
+              <h2 className="text-lg font-bold">{editingCustomer ? 'Edit Customer' : 'Add Customer'}</h2>
               <button onClick={() => setShowForm(false)}><X size={20} className="text-gray-400" /></button>
             </div>
-            <form onSubmit={handleCreate} className="space-y-4">
+            <form onSubmit={handleSave} className="space-y-4">
               <input type="text" placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
                 className="w-full px-3 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-brand" required />
               <input type="tel" placeholder="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })}
                 className="w-full px-3 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-brand" required />
               <input type="email" placeholder="Email (optional)" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
                 className="w-full px-3 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-brand" />
-              <Button type="submit" className="w-full">Add Customer</Button>
+              <Button type="submit" className="w-full">{editingCustomer ? 'Update' : 'Add'} Customer</Button>
             </form>
           </div>
         </div>
