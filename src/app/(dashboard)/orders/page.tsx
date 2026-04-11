@@ -4,9 +4,10 @@ import { useState, useEffect } from 'react';
 import api from '@/lib/api';
 import { useAuthStore } from '@/store/auth';
 import { Button } from '@/components/ui/button';
-import { CreditCard, Trash2, RotateCcw, Clock } from 'lucide-react';
+import { CreditCard, Trash2, RotateCcw, Clock, MessageCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import PaymentModal from '@/components/pos/PaymentModal';
+import { shareBillViaWhatsApp } from '@/lib/whatsapp-share';
 import type { Order, Bill } from '@/lib/types';
 
 const itemStatusConfig: Record<string, { icon: string; color: string; label: string }> = {
@@ -108,6 +109,27 @@ export default function OrdersPage() {
     }
   };
 
+  const handleWhatsAppShare = (order: Order) => {
+    if (!order.bill) {
+      toast.error('Bill not found');
+      return;
+    }
+    if (!order.customer?.phone) {
+      toast.error('Customer phone number not available');
+      return;
+    }
+
+    try {
+      shareBillViaWhatsApp(
+        order.bill,
+        { phone: order.customer.phone, country_code: order.customer.country_code },
+        { business_name: currentTenant?.business_name || 'Store', currency: currentTenant?.currency || 'INR' }
+      );
+    } catch {
+      toast.error('Failed to open WhatsApp');
+    }
+  };
+
   const showCheckout = (order: Order) => {
     return !isOrderPaid(order) && !['completed', 'cancelled'].includes(order.status);
   };
@@ -171,6 +193,16 @@ export default function OrdersPage() {
                   <div className="flex items-center gap-2">
                     {paid && (
                       <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Paid</span>
+                    )}
+                    {paid && order.customer?.phone && (
+                      <button
+                        onClick={() => handleWhatsAppShare(order)}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-green-500 hover:bg-green-600 text-white text-xs font-medium transition-colors"
+                        title="Share via WhatsApp"
+                      >
+                        <MessageCircle size={14} />
+                        Share
+                      </button>
                     )}
                     <span className="font-bold text-gray-900">{currency}{Number(order.total).toLocaleString()}</span>
                   </div>
