@@ -35,8 +35,9 @@ export default function PaymentModal({ bill, currency, onClose, onPaid }: Props)
   const [walletAmount, setWalletAmount] = useState('');
 
   useEffect(() => {
-    if (bill.customer_id) {
-      api.get(`/customers/${bill.customer_id}/wallet`)
+    const custId = bill.customer_id;
+    if (custId && !isNaN(Number(custId))) {
+      api.get(`/customers/${custId}/wallet`)
         .then((res) => setWalletBalance(Number(res.data.balance) || 0))
         .catch(() => setWalletBalance(0));
     }
