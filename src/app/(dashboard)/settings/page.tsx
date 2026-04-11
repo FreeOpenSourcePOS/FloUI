@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '@/store/auth';
 import { usePosSettingsStore, type PaperSize, type BillTemplate } from '@/store/pos-settings';
 import { usePrinterStore } from '@/hooks/usePrinter';
-import { Settings, Building2, Globe, CreditCard, Monitor, Users, Gift, Printer, Share2, FileText, Lock, Smartphone, RefreshCw, Copy, Check, Wifi, Usb, Trash2, Plus, Star, TestTube2, ChefHat, QrCode, CheckCircle2 } from 'lucide-react';
+import { Settings, Building2, Globe, CreditCard, Monitor, Users, Gift, Printer, Share2, FileText, Lock, Smartphone, RefreshCw, Copy, Check, Wifi, Usb, Trash2, Plus, Star, TestTube2, ChefHat, QrCode, CheckCircle2, Database } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
@@ -438,6 +438,7 @@ export default function SettingsPage() {
           <TabsTrigger value="kds">KDS Pairing</TabsTrigger>
           <TabsTrigger value="printing">Print Options</TabsTrigger>
           <TabsTrigger value="bill-template">Bill Template</TabsTrigger>
+          <TabsTrigger value="data">Data</TabsTrigger>
           <TabsTrigger value="updates">Updates</TabsTrigger>
         </TabsList>
 
@@ -1139,6 +1140,144 @@ export default function SettingsPage() {
           <div className="mt-6 flex gap-2">
             <button onClick={saveBillTemplate} className="px-5 py-2 text-sm bg-brand text-white rounded-lg hover:opacity-90 font-medium">Save</button>
             <button onClick={resetBillTemplate} className="px-5 py-2 text-sm border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 font-medium">Cancel</button>
+          </div>
+        </TabsContent>
+
+        {/* ================================================================
+            TAB: Data (Import/Export/Backup)
+        ================================================================ */}
+        <TabsContent value="data">
+          <div className="space-y-6">
+            {/* Database Export */}
+            <div className="bg-white rounded-xl border border-gray-100 p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <FileText size={20} className="text-gray-500" />
+                <h2 className="font-semibold text-gray-900">Export Database</h2>
+              </div>
+              <p className="text-sm text-gray-500 mb-4">
+                Export your entire database as a JSON file. This includes all products, orders, customers, and settings.
+              </p>
+              <button
+                onClick={async () => {
+                  try {
+                    const response = await fetch('/api/db/export');
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `flo-export-${new Date().toISOString().split('T')[0]}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                    toast.success('Database exported successfully');
+                  } catch {
+                    toast.error('Export failed');
+                  }
+                }}
+                className="px-5 py-2 text-sm bg-brand text-white rounded-lg hover:opacity-90 font-medium"
+              >
+                Export to JSON
+              </button>
+            </div>
+
+            {/* Database Backup */}
+            <div className="bg-white rounded-xl border border-gray-100 p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <FileText size={20} className="text-gray-500" />
+                <h2 className="font-semibold text-gray-900">Create Backup</h2>
+              </div>
+              <p className="text-sm text-gray-500 mb-4">
+                Create a complete backup of your SQLite database file.
+              </p>
+              <button
+                onClick={async () => {
+                  try {
+                    const response = await api.get('/db/backup');
+                    toast.success('Backup created successfully');
+                  } catch {
+                    toast.error('Backup failed');
+                  }
+                }}
+                className="px-5 py-2 text-sm bg-gray-600 text-white rounded-lg hover:opacity-90 font-medium"
+              >
+                Create Backup
+              </button>
+            </div>
+
+            {/* Database Import */}
+            <div className="bg-white rounded-xl border border-gray-100 p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <FileText size={20} className="text-gray-500" />
+                <h2 className="font-semibold text-gray-900">Import Database</h2>
+              </div>
+              <p className="text-sm text-gray-500 mb-4">
+                Import data from a Flo Desktop export file. Choose to merge with existing data or replace all data.
+              </p>
+              <input
+                type="file"
+                accept=".json"
+                id="import-file"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+
+                  const reader = new FileReader();
+                  reader.onload = async (event) => {
+                    try {
+                      const data = JSON.parse(event.target?.result as string);
+                      if (!data.app || data.app !== 'FloDesktop') {
+                        toast.error('Invalid Flo Desktop export file');
+                        return;
+                      }
+
+                      const overwrite = confirm('Do you want to replace ALL existing data? Click Cancel to merge instead.');
+                      
+                      const response = await api.post('/db/import', { data, overwrite });
+                      if (response.data.success) {
+                        toast.success(response.data.message);
+                      }
+                    } catch {
+                      toast.error('Import failed - invalid file format');
+                    }
+                  };
+                  reader.readAsText(file);
+                  e.target.value = '';
+                }}
+              />
+              <div className="flex gap-2">
+                <label
+                  htmlFor="import-file"
+                  className="px-5 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 cursor-pointer font-medium"
+                >
+                  Select File & Import
+                </label>
+              </div>
+            </div>
+
+            {/* Database Info */}
+            <div className="bg-white rounded-xl border border-gray-100 p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Database size={20} className="text-gray-500" />
+                <h2 className="font-semibold text-gray-900">Database Information</h2>
+              </div>
+              <button
+                onClick={async () => {
+                  try {
+                    const response = await api.get('/db/tables');
+                    const { tables } = response.data;
+                    const info = tables.map((t: { name: string; rows: number }) => `${t.name}: ${t.rows} rows`).join('\n');
+                    alert(`Database Tables:\n\n${info}`);
+                  } catch {
+                    toast.error('Failed to fetch table info');
+                  }
+                }}
+                className="px-5 py-2 text-sm border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 font-medium"
+              >
+                View Table Info
+              </button>
+            </div>
           </div>
         </TabsContent>
 
